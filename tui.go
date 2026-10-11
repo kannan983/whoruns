@@ -259,5 +259,11 @@ func (m model) footer() string {
 	for i, k := range keys {
 		parts[i] = header.Render(k[0]) + " " + dim.Render(k[1])
 	}
-	return count + strings.Join(parts, dim.Render("  ·  "))
+	left := count + strings.Join(parts, dim.Render("  ·  "))
+	credit := dim.Render("by Kannan · github.com/kannan983/whoruns")
+	gap := m.w - 2 - lipgloss.Width(left) - lipgloss.Width(credit)
+	if gap < 2 { // narrow terminal: the keys matter more
+		return left
+	}
+	return left + strings.Repeat(" ", gap) + credit
 }

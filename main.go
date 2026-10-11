@@ -20,7 +20,10 @@ const usage = `whoruns - find what's running, and where it lives
   whoruns --tui        live view with search and copy
   whoruns --version    print the version
 
-Run with sudo to see processes owned by other users.`
+Run with sudo to see processes owned by other users.
+
+Made by Kannan <kannan848@proton.me>
+https://github.com/kannan983/whoruns`
 
 func main() {
 	args := os.Args[1:]
