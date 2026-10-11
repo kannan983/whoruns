@@ -29,7 +29,7 @@ var (
 
 var (
 	portHeaders = []string{"PORT", "PROTO", "ADDR", "PID", "APP", "USER", "FOLDER", "COMMAND"}
-	appHeaders  = []string{"APP", "MEMORY", "CPU", "PROCS", "FOLDER"}
+	appHeaders  = []string{"APP", "MEMORY", "CPU", "GPU", "GPU MEM", "PROCS", "FOLDER"}
 )
 
 func portCells(rows []portRow) [][]string {
@@ -54,7 +54,14 @@ func appCells(apps []appRow) [][]string {
 	home, _ := os.UserHomeDir()
 	out := make([][]string, len(apps))
 	for i, a := range apps {
-		out[i] = []string{a.Name, human(a.Mem), fmt.Sprintf("%.0f%%", a.CPU),
+		gpu, gpuMem := "-", "-"
+		if a.HasGPU {
+			gpu = fmt.Sprintf("%.0f%%", a.GPU)
+			if a.GPUMem > 0 {
+				gpuMem = human(a.GPUMem)
+			}
+		}
+		out[i] = []string{a.Name, human(a.Mem), fmt.Sprintf("%.0f%%", a.CPU), gpu, gpuMem,
 			strconv.Itoa(a.Procs), dash(tilde(a.Folder, home))}
 	}
 	return out
@@ -74,16 +81,12 @@ func printPorts(rows []portRow) {
 	}
 }
 
-func printApps(apps []appRow, sys sysInfo, byCPU bool) {
+func printApps(apps []appRow, sys sysInfo, by string) {
 	if len(apps) > 15 {
 		apps = apps[:15]
 	}
-	by := "memory"
-	if byCPU {
-		by = "CPU"
-	}
-	lipgloss.Println(" " + sysLine(sys) + dim.Render("  ·  top apps by "+by))
-	lipgloss.Println(renderTable(appHeaders, appCells(apps), 4, -1, cliWidth(), nil, appStyle(apps)))
+	lipgloss.Println(" " + sysLine(sys) + dim.Render("  ·  top apps by "+sortLabel[by]))
+	lipgloss.Println(renderTable(appHeaders, appCells(apps), 6, -1, cliWidth(), nil, appStyle(apps)))
 }
 
 func portStyle(rows []portRow) func(row, col int) lipgloss.Style {
@@ -116,6 +119,8 @@ func appStyle(apps []appRow) func(row, col int) lipgloss.Style {
 			return heat(float64(a.Mem), 500<<20, 2<<30)
 		case 2:
 			return heat(a.CPU, 10, 50)
+		case 3:
+			return heat(a.GPU, 10, 50)
 		}
 		return lipgloss.NewStyle()
 	}
@@ -126,9 +131,16 @@ func sysLine(s sysInfo) string {
 	if s.total > 0 {
 		pct = float64(s.used) / float64(s.total) * 100
 	}
+	gpuPart := ""
+	if s.hasGPU {
+		gpuPart = dim.Render("  ·  ") + bold.Render("GPU ") + heat(s.gpu, 50, 85).Render(fmt.Sprintf("%.0f%%", s.gpu))
+	}
 	return bold.Render("Memory ") + heat(pct, 60, 85).Render(fmt.Sprintf("%s / %s", human(s.used), human(s.total))) +
-		dim.Render("  ·  ") + bold.Render("CPU ") + heat(s.cpu, 50, 85).Render(fmt.Sprintf("%.0f%%", s.cpu))
+		dim.Render("  ·  ") + bold.Render("CPU ") + heat(s.cpu, 50, 85).Render(fmt.Sprintf("%.0f%%", s.cpu)) +
+		gpuPart
 }
+
+var sortLabel = map[string]string{"mem": "memory", "cpu": "CPU", "gpu": "GPU"}
 
 func heat(v, warn, hot float64) lipgloss.Style {
 	switch {

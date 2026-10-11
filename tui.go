@@ -15,18 +15,18 @@ const refresh = 2 * time.Second
 type dataMsg struct {
 	ports []portRow
 	apps  []appRow
-	snap  cpuSnap
+	snap  snapshot
 	sys   sysInfo
 }
 
 type tickMsg struct{}
 
 type model struct {
-	tab    int // 0 ports, 1 apps
-	byCPU  bool
+	tab    int    // 0 ports, 1 apps
+	sortBy string // "mem", "cpu" or "gpu" for the Apps tab
 	ports  []portRow
 	apps   []appRow
-	snap   cpuSnap
+	snap   snapshot
 	sys    sysInfo
 	shown  []int // indexes into ports/apps for the rows that match the search
 	cursor int   // position in shown
@@ -40,15 +40,17 @@ func runTUI() error {
 	s := textinput.New()
 	s.Prompt = "/ "
 	s.Placeholder = "search app, port, folder…"
-	_, err := tea.NewProgram(model{search: s, snap: snapCPU()}).Run()
+	_, err := tea.NewProgram(model{search: s, snap: takeSnapshot(), sortBy: "mem"}).Run()
 	return err
 }
 
-func fetch(prev cpuSnap) tea.Cmd {
+func fetch(prev snapshot) tea.Cmd {
 	return func() tea.Msg {
 		ports, _ := listPorts(0)
 		apps, snap := listApps(prev)
-		return dataMsg{ports, apps, snap, sysStats(false)}
+		sys := sysStats(false)
+		sys.gpu, sys.hasGPU = snap.gpuTotal, gpuAvailable()
+		return dataMsg{ports, apps, snap, sys}
 	}
 }
 
@@ -106,7 +108,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.search.SetValue("")
 			m.filter()
 		case "s":
-			m.byCPU = !m.byCPU
+			m.sortBy = map[string]string{"mem": "cpu", "cpu": "gpu", "gpu": "mem"}[m.sortBy]
 			m.filter()
 		case "c", "y":
 			return m.copy(msg.String() == "y")
@@ -156,7 +158,7 @@ func (m *model) filter() {
 	if m.tab == 0 {
 		cells = portCells(m.ports)
 	} else {
-		sortApps(m.apps, m.byCPU)
+		sortApps(m.apps, m.sortBy)
 		cells = appCells(m.apps)
 	}
 	q := strings.ToLower(m.search.Value())
@@ -217,7 +219,7 @@ func (m model) tableView() string {
 		headers, all, style = portHeaders, portCells(m.ports), portStyle(m.ports)
 	} else {
 		headers, all, style = appHeaders, appCells(m.apps), appStyle(m.apps)
-		folderCol, cmdCol = 4, -1
+		folderCol, cmdCol = 6, -1
 	}
 	if len(m.shown) == 0 {
 		cells := [][]string{make([]string, len(headers))}
@@ -249,10 +251,8 @@ func (m model) footer() string {
 	keys := [][2]string{{"tab", "switch"}, {"/", "search"}, {"c", "copy folder"}}
 	if m.tab == 0 {
 		keys = append(keys, [2]string{"y", "copy command"})
-	} else if m.byCPU {
-		keys = append(keys, [2]string{"s", "sort by memory"})
 	} else {
-		keys = append(keys, [2]string{"s", "sort by cpu"})
+		keys = append(keys, [2]string{"s", "sort: " + sortLabel[m.sortBy]})
 	}
 	keys = append(keys, [2]string{"q", "quit"})
 	parts := make([]string, len(keys))

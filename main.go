@@ -17,6 +17,7 @@ const usage = `whoruns - find what's running, and where it lives
   whoruns ports 3000   only port 3000
   whoruns top          apps using the most memory
   whoruns top cpu      apps using the most CPU
+  whoruns top gpu      apps using the most GPU
   whoruns --tui        live view with search and copy
   whoruns --version    print the version
 
@@ -95,14 +96,18 @@ func runPorts(args []string) error {
 }
 
 func runTop(args []string) error {
-	byCPU := len(args) > 0 && args[0] == "cpu"
-	if len(args) > 1 || (len(args) == 1 && !byCPU && args[0] != "mem") {
-		return fmt.Errorf("usage: whoruns top [mem|cpu]")
+	by := "mem"
+	if len(args) == 1 {
+		by = args[0]
 	}
-	prev := snapCPU()
-	sys := sysStats(true) // blocks ~1s, which is the CPU sampling window
-	apps, _ := listApps(prev)
-	sortApps(apps, byCPU)
-	printApps(apps, sys, byCPU)
+	if len(args) > 1 || (by != "mem" && by != "cpu" && by != "gpu") {
+		return fmt.Errorf("usage: whoruns top [mem|cpu|gpu]")
+	}
+	prev := takeSnapshot()
+	sys := sysStats(true) // blocks ~1s, which is the CPU and GPU sampling window
+	apps, now := listApps(prev)
+	sys.gpu, sys.hasGPU = now.gpuTotal, gpuAvailable()
+	sortApps(apps, by)
+	printApps(apps, sys, by)
 	return nil
 }

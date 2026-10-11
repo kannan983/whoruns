@@ -38,7 +38,7 @@ PORT  APP              FOLDER                     COMMAND
 5432  docker:db        ~/Projects/Active/api      postgres:16
 ```
 
-And when the machine feels slow, `whoruns top` tells you *"brave is using 4.4 GB across 27 processes"*, not a wall of 200 PIDs.
+And when the machine feels slow, `whoruns top` tells you *"brave is using 4.4 GB, 76% CPU and 9% GPU across 27 processes"*, not a wall of 200 PIDs.
 
 ## Install
 
@@ -72,6 +72,7 @@ whoruns              listening ports (same as: whoruns ports)
 whoruns 3000         only port 3000
 whoruns top          apps using the most memory
 whoruns top cpu      apps using the most CPU
+whoruns top gpu      apps using the most GPU
 whoruns --tui        live view with search and copy
 whoruns --version    print the version
 ```
@@ -96,7 +97,7 @@ Processes are grouped into apps: a child running the same program as its parent 
 | `/` | search across every column (`enter` keeps it, `esc` clears it) |
 | `c` | copy the folder path |
 | `y` | copy the full command (Ports) |
-| `s` | sort Apps by memory or CPU |
+| `s` | sort Apps by memory, CPU or GPU |
 | `j` `k` / arrows, `g` `G`, `pgup` `pgdn` | move |
 | `q` | quit |
 
@@ -109,6 +110,7 @@ Copying uses OSC 52, so it works in modern terminals (Ghostty, kitty, WezTerm, i
 - **Docker** ports are held by `docker-proxy`, which says nothing useful. whoruns asks `docker ps` instead and reads the Compose `working_dir` label, so you see `~/Projects/Active/api`, not `/`. Containers on host networking are matched through their cgroup (Linux).
 - **Memory** on Linux is PSS, which splits shared memory fairly between processes, so multi-process apps such as browsers are not over-counted. Elsewhere it is RSS.
 - **CPU** is a percentage of one core, like `top`, so busy apps can pass 100%.
+- **GPU** on Linux comes from the kernel's per-client DRM counters (`/proc/<pid>/fdinfo`), the same source `nvtop` and `intel_gpu_top` use, so it works for Intel, AMD and other open drivers without root. An app's GPU % is its busiest engine (3D, video, copy...); GPU MEM is the memory it holds on the GPU, including buffers it shares with the compositor. NVIDIA's proprietary driver does not expose these counters, so whoruns reads `nvidia-smi pmon` instead (untested so far, reports welcome). Apps that never opened the GPU show `-`.
 
 ### Permissions
 
@@ -122,12 +124,13 @@ Without root, the OS hides the details of other users' processes (system service
 | Folder | working directory | working directory | executable's folder (Windows does not expose another process's working directory) |
 | Docker project folder | ✓ | ✓ (published ports) | ✓ (published ports) |
 | Memory | PSS | RSS | RSS |
+| GPU per app | Intel, AMD, others via DRM fdinfo; NVIDIA via `nvidia-smi` | - | NVIDIA via `nvidia-smi` |
 
 Linux is where whoruns is developed and tested daily; macOS and Windows builds are produced by every release.
 
 ## Roadmap
 
-- GPU usage per app
+- GPU per app on macOS and on Windows without NVIDIA
 
 There may also be an easter egg or two. Who knows who runs the world.
 
