@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -41,6 +42,9 @@ func runTUI() error {
 	s.Prompt = "/ "
 	s.Placeholder = "search app, port, folder…"
 	_, err := tea.NewProgram(model{search: s, snap: takeSnapshot(), sortBy: "mem"}).Run()
+	if errors.Is(err, tea.ErrInterrupted) { // Ctrl+C from outside is a normal way to quit
+		return nil
+	}
 	return err
 }
 
