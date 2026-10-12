@@ -28,7 +28,8 @@ var (
 )
 
 var (
-	portHeaders = []string{"PORT", "PROTO", "ADDR", "PID", "APP", "USER", "FOLDER", "COMMAND"}
+	portHeaders = []string{"PORT", "PROTO", "ADDR", "PID", "APP", "USER", "FLAGS", "FOLDER", "COMMAND"}
+	connHeaders = []string{"PORT", "PROTO", "REMOTE", "STATE", "PID", "APP", "USER", "FLAGS", "FOLDER", "COMMAND"}
 	appHeaders  = []string{"APP", "MEMORY", "CPU", "GPU", "GPU MEM", "PROCS", "FOLDER"}
 )
 
@@ -45,7 +46,21 @@ func portCells(rows []portRow) [][]string {
 			name += " ⚡elite"
 		}
 		out[i] = []string{strconv.Itoa(int(r.Port)), r.Proto, clip(r.Addr, 16), dash(pid),
-			name, dash(r.User), dash(tilde(r.Folder, home)), dash(r.Command)}
+			name, dash(r.User), strings.Join(r.Flags, ","), dash(tilde(r.Folder, home)), dash(r.Command)}
+	}
+	return out
+}
+
+func connCells(rows []portRow) [][]string {
+	home, _ := os.UserHomeDir()
+	out := make([][]string, len(rows))
+	for i, r := range rows {
+		pid := ""
+		if r.PID != 0 {
+			pid = strconv.Itoa(int(r.PID))
+		}
+		out[i] = []string{strconv.Itoa(int(r.Port)), r.Proto, r.Remote, dash(r.State), dash(pid),
+			dash(r.Name), dash(r.User), strings.Join(r.Flags, ","), dash(tilde(r.Folder, home)), dash(r.Command)}
 	}
 	return out
 }
@@ -75,7 +90,31 @@ func printPorts(rows []portRow) {
 		}
 	}
 	lipgloss.Println(dim.Render(fmt.Sprintf(" %d listening ports", len(rows))))
-	lipgloss.Println(renderTable(portHeaders, portCells(rows), 6, 7, cliWidth(), nil, portStyle(rows)))
+	lipgloss.Println(renderTable(portHeaders, portCells(rows), 7, 8, cliWidth(), nil, portStyle(rows, 4)))
+	printFooter(rows, hidden)
+}
+
+func printConns(rows []portRow) {
+	hidden := 0
+	for _, r := range rows {
+		if r.Name == "" {
+			hidden++
+		}
+	}
+	lipgloss.Println(dim.Render(fmt.Sprintf(" %d connections", len(rows))))
+	lipgloss.Println(renderTable(connHeaders, connCells(rows), 8, 9, cliWidth(), nil, portStyle(rows, 5)))
+	printFooter(rows, hidden)
+}
+
+// printFooter adds the executable hashes (single-port queries only) and the sudo hint.
+func printFooter(rows []portRow, hidden int) {
+	seen := map[int32]bool{}
+	for _, r := range rows {
+		if r.Hash != "" && !seen[r.PID] {
+			seen[r.PID] = true
+			lipgloss.Println(fmt.Sprintf(" %s %s  %s", dim.Render(fmt.Sprintf("pid %d sha256", r.PID)), r.Hash, dim.Render(r.Exe)))
+		}
+	}
 	if hidden > 0 {
 		lipgloss.Println(dim.Render(fmt.Sprintf(" %d owned by other users: run with sudo to see them", hidden)))
 	}
@@ -89,17 +128,20 @@ func printApps(apps []appRow, sys sysInfo, by string) {
 	lipgloss.Println(renderTable(appHeaders, appCells(apps), 6, -1, cliWidth(), nil, appStyle(apps)))
 }
 
-func portStyle(rows []portRow) func(row, col int) lipgloss.Style {
+// portStyle styles port and conn rows; appCol is where APP sits in each table.
+func portStyle(rows []portRow, appCol int) func(row, col int) lipgloss.Style {
 	return func(row, col int) lipgloss.Style {
 		r := rows[row]
 		switch {
-		case r.Port == 1337 && (col == 0 || col == 4):
+		case len(r.Flags) > 0:
+			return red.Bold(true)
+		case r.Port == 1337 && (col == 0 || col == appCol):
 			return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#39FF14"))
 		case r.Name == "":
 			return dim
 		case col == 0:
 			return cyan.Bold(true)
-		case r.Docker && col == 4:
+		case r.Docker && col == appCol:
 			return blue
 		}
 		return lipgloss.NewStyle()

@@ -69,7 +69,9 @@ Or grab an archive from [Releases](https://github.com/kannan983/whoruns/releases
 
 ```
 whoruns              listening ports (same as: whoruns ports)
-whoruns 3000         only port 3000
+whoruns 3000         only port 3000, with the sha256 of its binary
+whoruns conns        established connections and their remote end
+whoruns conns 443    only connections on local or remote port 443
 whoruns top          apps using the most memory
 whoruns top cpu      apps using the most CPU
 whoruns top gpu      apps using the most GPU
@@ -80,6 +82,24 @@ whoruns --version    print the version
 ### Ports
 
 <img src="docs/ports.svg" alt="whoruns ports table" width="900">
+
+### Connections
+
+`whoruns conns` lists connected sockets (TCP past `LISTEN`, UDP with a peer) with the remote address, so outbound traffic such as a reverse shell or a beacon shows up next to the process, folder and command behind it. Give a port to match either end: `whoruns conns 443`.
+
+### Suspicious processes
+
+Rows with a known malware trait turn red and list it under FLAGS, on both `ports` and `conns`:
+
+| Flag | Meaning |
+|---|---|
+| `deleted` | the binary was deleted after the process started (Linux) |
+| `tmp-exe` | the binary runs from `/tmp`, `/var/tmp` or `/dev/shm` |
+| `fake-kthread` | the command line poses as a kernel thread, like `[kworker/0:1]` |
+
+Flagged connections sort first. Query a single port (`whoruns 4444`, `whoruns conns 443`) to also print the SHA-256 of each owning binary, ready to look up on VirusTotal; on Linux it is read through `/proc/<pid>/exe`, so it works even when the file is deleted.
+
+This is triage, not detection: whoruns reads the same socket and process tables as `ss` and `ps`, so a rootkit that hides from them hides from whoruns too, and it does not inspect packets.
 
 ### Top apps
 
@@ -93,10 +113,10 @@ Processes are grouped into apps: a child running the same program as its parent 
 
 | Key | Action |
 |---|---|
-| `tab` / `1` / `2` | switch between Ports and Apps |
+| `tab` / `1` / `2` / `3` | switch between Ports, Apps and Conns |
 | `/` | search across every column (`enter` keeps it, `esc` clears it) |
 | `c` | copy the folder path |
-| `y` | copy the full command (Ports) |
+| `y` | copy the full command (Ports, Conns) |
 | `s` | sort Apps by memory, CPU or GPU |
 | `j` `k` / arrows, `g` `G`, `pgup` `pgdn` | move |
 | `q` | quit |

@@ -1,8 +1,11 @@
 package main
 
 import (
+	"crypto/sha256"
 	"fmt"
+	"io"
 	"net"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -16,11 +19,16 @@ type portRow struct {
 	Port    uint32
 	Proto   string
 	Addr    string
+	Remote  string // conns only: the other end, ip:port
+	State   string // conns only: ESTABLISHED, SYN_SENT, ...
 	PID     int32
 	Name    string
 	User    string
 	Folder  string // absolute; shortened with ~ only when shown
 	Command string
+	Exe     string
+	Flags   []string // suspicious traits, see suspicious
+	Hash    string   // sha256 of the executable, only filled for a single-port query
 	Docker  bool
 	ips     []string
 }
@@ -72,6 +80,9 @@ func listPorts(filter uint32) ([]portRow, error) {
 	rows := make([]portRow, 0, len(merged))
 	for _, r := range merged {
 		r.Addr = addrLabel(r.ips)
+		if filter != 0 {
+			r.Hash = exeHash(r.PID, r.Exe)
+		}
 		rows = append(rows, *r)
 	}
 	sort.Slice(rows, func(i, j int) bool {
@@ -94,6 +105,9 @@ func fillProc(r *portRow, dk dockerInfo) {
 		return
 	}
 	r.User, _ = p.Username()
+	r.Exe, _ = p.Exe()
+	args, _ := p.CmdlineSlice()
+	r.Flags = suspicious(r.Exe, args)
 	if c, ok := dk.containerOf(r.PID); ok { // host-network container: its cwd is inside the container
 		r.Name, r.Folder, r.Command, r.Docker = "docker:"+c.name, c.folder, c.image, true
 		return
@@ -103,6 +117,93 @@ func fillProc(r *portRow, dk dockerInfo) {
 	r.Command, _ = p.Cmdline()
 }
 
+// listConns returns connected sockets: TCP past LISTEN and UDP with a peer.
+// filter matches the local or the remote port.
+func listConns(filter uint32) ([]portRow, error) {
+	conns, err := psnet.Connections("inet")
+	if err != nil {
+		return nil, err
+	}
+	dk := loadDocker()
+	procs := map[int32]portRow{} // a browser holds dozens of sockets: look each process up once
+	var rows []portRow
+	for _, c := range conns {
+		proto := "tcp"
+		if c.Type == syscall.SOCK_DGRAM {
+			proto = "udp"
+		}
+		// TIME_WAIT sockets have no owning process left
+		if c.Raddr.Port == 0 || c.Status == "LISTEN" || c.Status == "TIME_WAIT" {
+			continue
+		}
+		if filter != 0 && c.Laddr.Port != filter && c.Raddr.Port != filter {
+			continue
+		}
+		r, ok := procs[c.Pid]
+		if !ok {
+			r = portRow{PID: c.Pid}
+			fillProc(&r, dk)
+			if filter != 0 {
+				r.Hash = exeHash(r.PID, r.Exe)
+			}
+			procs[c.Pid] = r
+		}
+		r.Port, r.Proto, r.State = c.Laddr.Port, proto, c.Status
+		r.Remote = net.JoinHostPort(c.Raddr.IP, fmt.Sprint(c.Raddr.Port))
+		rows = append(rows, r)
+	}
+	sort.Slice(rows, func(i, j int) bool { // flagged first, then grouped by app
+		a, b := rows[i], rows[j]
+		if (len(a.Flags) > 0) != (len(b.Flags) > 0) {
+			return len(a.Flags) > 0
+		}
+		if a.Name != b.Name {
+			return a.Name < b.Name
+		}
+		return a.Port < b.Port
+	})
+	return rows, nil
+}
+
+// suspicious lists traits common to malware and rare in normal software:
+// a binary deleted after start, one run from a world-writable temp dir, or a
+// userland process whose argv poses as a kernel thread ("[kworker/0:1]";
+// real kernel threads have no command line at all).
+func suspicious(exe string, args []string) []string {
+	var flags []string
+	path, deleted := strings.CutSuffix(exe, " (deleted)")
+	if deleted {
+		flags = append(flags, "deleted")
+	}
+	for _, dir := range []string{"/tmp/", "/var/tmp/", "/dev/shm/"} {
+		if strings.HasPrefix(path, dir) {
+			flags = append(flags, "tmp-exe")
+			break
+		}
+	}
+	if len(args) > 0 && strings.HasPrefix(args[0], "[") {
+		flags = append(flags, "fake-kthread")
+	}
+	return flags
+}
+
+// exeHash is the sha256 of the process binary. /proc/PID/exe still opens
+// after the file is deleted, so try it before the path.
+func exeHash(pid int32, exe string) string {
+	f, err := os.Open(fmt.Sprintf("/proc/%d/exe", pid))
+	if err != nil {
+		if f, err = os.Open(strings.TrimSuffix(exe, " (deleted)")); err != nil {
+			return ""
+		}
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return ""
+	}
+	return fmt.Sprintf("%x", h.Sum(nil))
+}
+
 // procName is the program name from the command line: the OS process name
 // can be a thread name (node shows "MainThread"). Chromium-based apps rewrite
 // argv into "/opt/app/app --type=utility ...", so only the first word counts.
@@ -110,6 +211,9 @@ func procName(p *process.Process) string {
 	name, _ := p.Name()
 	if args, err := p.CmdlineSlice(); err == nil && len(args) > 0 && args[0] != "" {
 		name = args[0]
+	}
+	if strings.HasPrefix(name, "[") { // poses as a kernel thread: show the disguise whole, it is not a path
+		return name
 	}
 	if f := strings.Fields(name); len(f) > 0 {
 		name = filepath.Base(f[0])

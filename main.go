@@ -14,14 +14,18 @@ var version = "dev"
 const usage = `whoruns - find what's running, and where it lives
 
   whoruns              listening ports (same as: whoruns ports)
-  whoruns ports 3000   only port 3000
+  whoruns ports 3000   only port 3000, with the sha256 of its binary
+  whoruns conns        established connections and their remote end
+  whoruns conns 443    only connections on local or remote port 443
   whoruns top          apps using the most memory
   whoruns top cpu      apps using the most CPU
   whoruns top gpu      apps using the most GPU
   whoruns --tui        live view with search and copy
   whoruns --version    print the version
 
-Run with sudo to see processes owned by other users.
+Rows in red have suspicious traits (FLAGS): deleted = binary removed after
+start, tmp-exe = run from /tmp, /var/tmp or /dev/shm, fake-kthread = poses
+as a kernel thread. Run with sudo to see processes owned by other users.
 
 Made by Kannan <kannan848@proton.me>
 https://github.com/kannan983/whoruns`
@@ -36,6 +40,8 @@ func main() {
 	switch cmd {
 	case "", "ports":
 		err = runPorts(args)
+	case "conns":
+		err = runConns(args)
 	case "top":
 		err = runTop(args)
 	case "--tui", "tui":
@@ -92,6 +98,27 @@ func runPorts(args []string) error {
 		return nil
 	}
 	printPorts(rows)
+	return nil
+}
+
+func runConns(args []string) error {
+	var filter uint32
+	if len(args) > 0 {
+		p, err := strconv.ParseUint(args[0], 10, 16)
+		if err != nil || len(args) > 1 {
+			return fmt.Errorf("usage: whoruns conns [PORT]")
+		}
+		filter = uint32(p)
+	}
+	rows, err := listConns(filter)
+	if err != nil {
+		return err
+	}
+	if len(rows) == 0 {
+		fmt.Println("no connections")
+		return nil
+	}
+	printConns(rows)
 	return nil
 }
 

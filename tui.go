@@ -15,6 +15,7 @@ const refresh = 2 * time.Second
 
 type dataMsg struct {
 	ports []portRow
+	conns []portRow
 	apps  []appRow
 	snap  snapshot
 	sys   sysInfo
@@ -23,9 +24,10 @@ type dataMsg struct {
 type tickMsg struct{}
 
 type model struct {
-	tab    int    // 0 ports, 1 apps
+	tab    int    // 0 ports, 1 apps, 2 conns
 	sortBy string // "mem", "cpu" or "gpu" for the Apps tab
 	ports  []portRow
+	conns  []portRow
 	apps   []appRow
 	snap   snapshot
 	sys    sysInfo
@@ -51,10 +53,11 @@ func runTUI() error {
 func fetch(prev snapshot) tea.Cmd {
 	return func() tea.Msg {
 		ports, _ := listPorts(0)
+		conns, _ := listConns(0)
 		apps, snap := listApps(prev)
 		sys := sysStats(false)
 		sys.gpu, sys.hasGPU = snap.gpuTotal, gpuAvailable()
-		return dataMsg{ports, apps, snap, sys}
+		return dataMsg{ports, conns, apps, snap, sys}
 	}
 }
 
@@ -72,7 +75,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		return m, fetch(m.snap)
 	case dataMsg:
-		m.ports, m.apps, m.snap, m.sys = msg.ports, msg.apps, msg.snap, msg.sys
+		m.ports, m.conns, m.apps, m.snap, m.sys = msg.ports, msg.conns, msg.apps, msg.snap, msg.sys
 		m.filter()
 		return m, tick(refresh)
 	case tea.KeyPressMsg:
@@ -98,9 +101,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "q", "ctrl+c":
 			return m, tea.Quit
-		case "tab", "1", "2":
+		case "tab", "1", "2", "3":
 			if msg.String() == "tab" {
-				m.tab = 1 - m.tab
+				m.tab = (m.tab + 1) % 3
 			} else {
 				m.tab = int(msg.String()[0] - '1')
 			}
@@ -139,12 +142,16 @@ func (m model) copy(command bool) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	i := m.shown[m.cursor]
+	rows := m.ports
+	if m.tab == 2 {
+		rows = m.conns
+	}
 	var text, what string
 	switch {
-	case m.tab == 0 && command:
-		text, what = m.ports[i].Command, "command"
-	case m.tab == 0:
-		text, what = m.ports[i].Folder, "folder"
+	case m.tab != 1 && command:
+		text, what = rows[i].Command, "command"
+	case m.tab != 1:
+		text, what = rows[i].Folder, "folder"
 	case !command:
 		text, what = m.apps[i].Folder, "folder"
 	}
@@ -159,11 +166,14 @@ func (m model) copy(command bool) (tea.Model, tea.Cmd) {
 // filter recomputes which rows match the search.
 func (m *model) filter() {
 	var cells [][]string
-	if m.tab == 0 {
+	switch m.tab {
+	case 0:
 		cells = portCells(m.ports)
-	} else {
+	case 1:
 		sortApps(m.apps, m.sortBy)
 		cells = appCells(m.apps)
+	case 2:
+		cells = connCells(m.conns)
 	}
 	q := strings.ToLower(m.search.Value())
 	m.shown = m.shown[:0]
@@ -195,7 +205,7 @@ func (m model) View() tea.View {
 func (m model) titleBar() string {
 	pill := lipgloss.NewStyle().Padding(0, 1)
 	left := pill.Bold(true).Foreground(accent).Render("◉ whoruns")
-	for i, t := range []string{"Ports", "Apps"} {
+	for i, t := range []string{"Ports", "Apps", "Conns"} {
 		label := fmt.Sprintf("%d %s", i+1, t)
 		if i == m.tab {
 			left += " " + pill.Inherit(selected).Render(label)
@@ -218,12 +228,17 @@ func (m model) tableView() string {
 	var headers []string
 	var all [][]string
 	var style func(row, col int) lipgloss.Style
-	folderCol, cmdCol := 6, 7
-	if m.tab == 0 {
-		headers, all, style = portHeaders, portCells(m.ports), portStyle(m.ports)
-	} else {
+	var folderCol, cmdCol int
+	switch m.tab {
+	case 0:
+		headers, all, style = portHeaders, portCells(m.ports), portStyle(m.ports, 4)
+		folderCol, cmdCol = 7, 8
+	case 1:
 		headers, all, style = appHeaders, appCells(m.apps), appStyle(m.apps)
 		folderCol, cmdCol = 6, -1
+	case 2:
+		headers, all, style = connHeaders, connCells(m.conns), portStyle(m.conns, 5)
+		folderCol, cmdCol = 8, 9
 	}
 	if len(m.shown) == 0 {
 		cells := [][]string{make([]string, len(headers))}
@@ -253,7 +268,7 @@ func (m model) footer() string {
 		return count + m.status
 	}
 	keys := [][2]string{{"tab", "switch"}, {"/", "search"}, {"c", "copy folder"}}
-	if m.tab == 0 {
+	if m.tab != 1 {
 		keys = append(keys, [2]string{"y", "copy command"})
 	} else {
 		keys = append(keys, [2]string{"s", "sort: " + sortLabel[m.sortBy]})
