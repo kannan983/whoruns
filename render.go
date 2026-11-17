@@ -269,18 +269,36 @@ func fitCells(headers []string, cells [][]string, folderCol, cmdCol, avail int) 
 			col = folderCol
 		}
 		if w[col] <= 12 {
+			col = widest(headers, w) // then the widest column that is still wider than its header
+		}
+		if col < 0 {
 			break
 		}
 		w[col]--
 		total--
 	}
 	for _, row := range cells {
-		row[folderCol] = clipLeft(row[folderCol], w[folderCol])
-		if cmdCol >= 0 {
-			row[cmdCol] = clip(row[cmdCol], w[cmdCol])
+		for i := range row {
+			if i == folderCol {
+				row[i] = clipLeft(row[i], w[i])
+			} else {
+				row[i] = clip(row[i], w[i])
+			}
 		}
 	}
 	return w
+}
+
+// widest returns the widest column that can still shrink without cutting its
+// header, or -1 when none can.
+func widest(headers []string, w []int) int {
+	best := -1
+	for i, x := range w {
+		if x > max(lipgloss.Width(headers[i]), 2) && (best < 0 || x > w[best]) {
+			best = i
+		}
+	}
+	return best
 }
 
 func clip(s string, n int) string {
