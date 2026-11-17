@@ -199,17 +199,24 @@ func heat(v, warn, hot float64) lipgloss.Style {
 // the selected row reads as one solid bar, and pins each column to the width
 // of all rows so nothing jumps while scrolling. Style rows are window-relative.
 func renderTable(headers []string, cells [][]string, folderCol, cmdCol, width int, window *[2]int, style func(row, col int) lipgloss.Style) string {
-	overhead := 2*len(headers) + 2 // cell padding + outer border
-	if window == nil {
-		overhead += len(headers) - 1
+	overhead := func(n int) int {
+		if window == nil {
+			return 3*n + 1 // cell padding, column lines, outer border
+		}
+		return 2*n + 2
 	}
-	widths := fitCells(headers, cells, folderCol, cmdCol, width-overhead)
+	widths, avail := fitCells(headers, cells, folderCol, cmdCol, width, overhead)
+	headers = headers[:len(widths)]
 	if window != nil {
 		used := 0
 		for _, w := range widths {
 			used += w
 		}
-		widths[folderCol] += max(width-overhead-used, 0) // spare room goes to the folder
+		spare := folderCol // spare room goes to the folder, or the last column if it was dropped
+		if spare >= len(widths) {
+			spare = len(widths) - 1
+		}
+		widths[spare] += max(avail-used, 0)
 		headers = append([]string(nil), headers...)
 		for i := range headers {
 			headers[i] += strings.Repeat(" ", widths[i]-lipgloss.Width(headers[i]))
@@ -246,10 +253,12 @@ func termWidth() int {
 	return w
 }
 
-// fitCells shrinks the command, then the folder column, until the
-// table fits avail columns, and returns the final widths. Folders lose their
-// start ("…/Active/webapp"), commands lose their end.
-func fitCells(headers []string, cells [][]string, folderCol, cmdCol, avail int) []int {
+// fitCells fits the table into width: it drops columns from the right while
+// even their minimum widths don't fit, then shrinks the command, the folder and
+// finally the widest column. Folders lose their start ("…/Active/webapp"), the
+// rest lose their end. It trims cells to the kept columns and returns their
+// widths and the room left for cell content.
+func fitCells(headers []string, cells [][]string, folderCol, cmdCol, width int, overhead func(n int) int) ([]int, int) {
 	w := make([]int, len(headers))
 	for i, h := range headers {
 		w[i] = lipgloss.Width(h)
@@ -259,6 +268,29 @@ func fitCells(headers []string, cells [][]string, folderCol, cmdCol, avail int) 
 			w[i] = max(w[i], lipgloss.Width(c))
 		}
 	}
+	floor := make([]int, len(w)) // narrowest a column may get: its header, or 8 so values stay readable
+	for i := range w {
+		floor[i] = min(w[i], max(lipgloss.Width(headers[i]), 8))
+	}
+	n, need := len(w), 0
+	for _, f := range floor {
+		need += f
+	}
+	for n > 2 && need+overhead(n) > width {
+		n--
+		need -= floor[n]
+	}
+	w, avail := w[:n], width-overhead(n)
+	for i := range cells {
+		cells[i] = cells[i][:n]
+	}
+	if folderCol >= n {
+		folderCol = -1
+	}
+	if cmdCol >= n {
+		cmdCol = -1
+	}
+
 	total := 0
 	for _, x := range w {
 		total += x
@@ -268,8 +300,8 @@ func fitCells(headers []string, cells [][]string, folderCol, cmdCol, avail int) 
 		if col < 0 || w[col] <= 12 {
 			col = folderCol
 		}
-		if w[col] <= 12 {
-			col = widest(headers, w) // then the widest column that is still wider than its header
+		if col < 0 || w[col] <= 12 {
+			col = widest(w, floor)
 		}
 		if col < 0 {
 			break
@@ -286,15 +318,14 @@ func fitCells(headers []string, cells [][]string, folderCol, cmdCol, avail int) 
 			}
 		}
 	}
-	return w
+	return w, avail
 }
 
-// widest returns the widest column that can still shrink without cutting its
-// header, or -1 when none can.
-func widest(headers []string, w []int) int {
+// widest returns the widest column still above its floor, or -1 when none is.
+func widest(w, floor []int) int {
 	best := -1
 	for i, x := range w {
-		if x > max(lipgloss.Width(headers[i]), 2) && (best < 0 || x > w[best]) {
+		if x > floor[i] && (best < 0 || x > w[best]) {
 			best = i
 		}
 	}
