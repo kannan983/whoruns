@@ -71,3 +71,10 @@ case ":$PATH:" in
   *":$dir:"*) ;;
   *) echo "Note: $dir is not in your PATH. Add it to your shell profile." ;;
 esac
+
+# an older copy earlier in PATH would still run instead of this one
+found=$(command -v whoruns 2>/dev/null || true)
+if [ -n "$found" ] && ! [ "$found" -ef "$dir/whoruns" ]; then
+  echo "Warning: 'whoruns' runs $found ($("$found" --version 2>/dev/null || echo "unknown version")), which comes first in your PATH."
+  echo "  Remove it to use the new one: rm $found && hash -r"
+fi
