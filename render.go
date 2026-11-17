@@ -245,8 +245,18 @@ func cliWidth() int {
 	return 160 // piped: still keep lines readable
 }
 
+// termWidth asks stdout, then the controlling terminal, so the table still
+// fits when a shell wrapper or pager sits between whoruns and the screen.
 func termWidth() int {
-	w, _, err := term.GetSize(int(os.Stdout.Fd()))
+	if w, _, err := term.GetSize(int(os.Stdout.Fd())); err == nil {
+		return w
+	}
+	tty, err := os.Open("/dev/tty")
+	if err != nil {
+		return 0
+	}
+	defer tty.Close()
+	w, _, err := term.GetSize(int(tty.Fd()))
 	if err != nil {
 		return 0
 	}
